@@ -1,0 +1,508 @@
+C51 COMPILER V9.53.0.0   SMARTCLOCK                                                        11/13/2019 15:40:30 PAGE 1   
+
+
+C51 COMPILER V9.53.0.0, COMPILATION OF MODULE SMARTCLOCK
+OBJECT MODULE PLACED IN .\src\SmaRTClock.OBJ
+COMPILER INVOKED BY: d:\simplicitystdio\developer\toolchains\keil_8051\9.53\BIN\C51.exe E:\elmos1_beetest\src\SmaRTClock
+                    -.c OMF2 SMALL DEBUG OBJECTEXTEND ROM(LARGE) WARNINGLEVEL(2) FLOATFUZZY(3) OPTIMIZE(8,SPEED) INTVECTOR(0X0000) INTPROMOTE
+                    - INCDIR(E:\elmos1_beetest\inc;D:/simplicitystdio/developer/sdks/si8051/v3//Device/shared/si8051Base;D:/simplicitystdio/d
+                    -eveloper/sdks/si8051/v3//Device/EFM8SB1;D:/simplicitystdio/developer/sdks/si8051/v3//Device/EFM8SB1/inc) PRINT(.\src\Sma
+                    -RTClock.lst) COND PAGEWIDTH(120) PAGELENGTH(65) OBJECT(.\src\SmaRTClock.OBJ)
+
+line level    source
+
+   1          //-----------------------------------------------------------------------------
+   2          // SmaRTClock.c
+   3          //-----------------------------------------------------------------------------
+   4          // Copyright 2014 Silicon Laboratories, Inc.
+   5          // http://developer.silabs.com/legal/version/v11/Silicon_Labs_Software_License_Agreement.txt
+   6          //
+   7          // Program Description:
+   8          //
+   9          // Driver for the SmaRTClock peripheral.
+  10          //
+  11          // Target:         EFM8SB1
+  12          // Tool chain:     Generic
+  13          // Command Line:   None
+  14          //
+  15          // Release 1.0 (BL)
+  16          //    - Initial Release
+  17          //    - 9 JAN 2015
+  18          //
+  19          // Release 1.0
+  20          //    - Initial Revision (FB)
+  21          //    - 19 MAY 2010
+  22          //
+  23          
+  24          //-----------------------------------------------------------------------------
+  25          // Includes
+  26          //-----------------------------------------------------------------------------
+  27          #include "SI_EFM8SB1_Register_Enums.h"
+  28          #include "smartclock.h"                // RTC Functionality
+  29          #include "power.h"                     // Power Management Functionality
+  30          
+  31          #if SMARTCLOCK_ENABLED
+  32          
+  33          //-----------------------------------------------------------------------------
+  34          // Global Variables
+  35          //-----------------------------------------------------------------------------
+  36          
+  37          // Variables used for the RTC interface
+  38          uint8_t RTC0CN0_Local;                       // Holds the desired RTC0CN0 settings
+  39           
+  40          //-----------------------------------------------------------------------------
+  41          // Global CONSTANTS
+  42          //-----------------------------------------------------------------------------
+  43          
+  44          //-----------------------------------------------------------------------------
+  45          // Function PROTOTYPES
+  46          //-----------------------------------------------------------------------------
+  47          
+  48          uint8_t   RTC_Read (uint8_t reg);
+  49          void RTC_Write (uint8_t reg, uint8_t value);
+  50          void RTC_WriteAlarm (uint32_t alarm);
+  51          uint32_t  RTC_GetCurrentTime(void);
+  52          void RTC_SetCurrentTime(uint32_t time);
+C51 COMPILER V9.53.0.0   SMARTCLOCK                                                        11/13/2019 15:40:30 PAGE 2   
+
+  53          void RTC0CN0_SetBits(uint8_t bits);
+  54          void RTC0CN0_ClearBits(uint8_t bits);
+  55          void RTC_SleepTicks(uint32_t ticks);
+  56          
+  57          //-----------------------------------------------------------------------------
+  58          // RTC_Read ()
+  59          //-----------------------------------------------------------------------------
+  60          //
+  61          // Return Value : RTC0DAT
+  62          // Parameters   : 1) uint8_t reg - address of RTC register to read
+  63          //
+  64          // This function will read one byte from the specified RTC register.
+  65          // Using a register number greater that 0x0F is not permited.
+  66          //
+  67          //  Timing of SmaRTClock register read with short bit set
+  68          //
+  69          //     mov      RTC0ADR, #094h
+  70          //     nop
+  71          //     nop
+  72          //     nop
+  73          //     mov      A, RTC0DAT
+  74          //
+  75          //-----------------------------------------------------------------------------
+  76          uint8_t RTC_Read (uint8_t reg)
+  77          {
+  78   1      
+  79   1         RTC0ADR  = (0x90 | reg);            // pick register and set BUSY to 
+  80   1                                             // initiate the read
+  81   1                                    
+  82   1         NOP(); NOP(); NOP();                // delay 3 system clocks
+  83   1         
+  84   1         return RTC0DAT;                     // return value
+  85   1      }
+  86          
+  87          //-----------------------------------------------------------------------------
+  88          // RTC_Write ()
+  89          //-----------------------------------------------------------------------------
+  90          //
+  91          // Return Value : none
+  92          // Parameters   : 1) uint8_t reg - address of RTC register to write
+  93          //                2) uint8_t value - the value to write to <reg>
+  94          //
+  95          // This function will Write one byte to the specified RTC register.
+  96          // Using a register number greater that 0x0F is not permited.
+  97          //
+  98          // Timing of SmaRTClock register write with short bit set
+  99          //
+ 100          //       mov      RTC0ADR, #014h
+ 101          //       mov      RTC0DAT, #088h
+ 102          //       nop
+ 103          //
+ 104          //-----------------------------------------------------------------------------
+ 105          void RTC_Write (uint8_t reg, uint8_t value)
+ 106          {
+ 107   1         RTC0ADR  = (0x10 | reg);            // pick register
+ 108   1         RTC0DAT = value;                    // write data
+ 109   1      }
+ 110          
+ 111          //-----------------------------------------------------------------------------
+ 112          // RTC_WriteAlarm ()
+ 113          //-----------------------------------------------------------------------------
+ 114          //
+ 115          // Return Value : none
+C51 COMPILER V9.53.0.0   SMARTCLOCK                                                        11/13/2019 15:40:30 PAGE 3   
+
+ 116          // Parameters   : 1) uint32_t alarm - the value to write to <ALARM>
+ 117          //
+ 118          // This function writes a value to the <ALRM> registers
+ 119          //
+ 120          // Instruction timing of multi-byte write with short bit set
+ 121          //
+ 122          //       mov      RTC0ADR, #010h
+ 123          //       mov      RTC0DAT, #05h
+ 124          //       nop
+ 125          //       mov      RTC0DAT, #06h
+ 126          //       nop
+ 127          //       mov      RTC0DAT, #07h
+ 128          //       nop
+ 129          //       mov      RTC0DAT, #08h
+ 130          //       nop
+ 131          //
+ 132          //-----------------------------------------------------------------------------
+ 133          
+ 134          void RTC_WriteAlarm (uint32_t alarm)
+ 135          {   
+ 136   1         SI_UU32_t alarm_value;
+ 137   1      
+ 138   1         alarm_value.u32 = alarm;   
+ 139   1      
+ 140   1         // Temporarily disable alarm while updating registers
+ 141   1         RTC0ADR = (0x10 | RTC0CN0);
+ 142   1         RTC0DAT = (RTC0CN0_Local & ~RTC0AEN);       
+ 143   1         NOP();
+ 144   1         
+ 145   1         // Write the value to the alarm registers
+ 146   1         RTC0ADR = (0x10 | ALARM0);       
+ 147   1         RTC0DAT = alarm_value.u8[B0];    // write data
+ 148   1         NOP();
+ 149   1         RTC0DAT = alarm_value.u8[B1];    // write data
+ 150   1         NOP();
+ 151   1         RTC0DAT = alarm_value.u8[B2];    // write data
+ 152   1         NOP(); 
+ 153   1         RTC0DAT = alarm_value.u8[B3];    // write data
+ 154   1         NOP(); 
+ 155   1         
+ 156   1         // Restore alarm state after registers have been written
+ 157   1         RTC0ADR = (0x10 | RTC0CN0);
+ 158   1         RTC0DAT = RTC0CN0_Local;  
+ 159   1      }
+ 160          
+ 161          //-----------------------------------------------------------------------------
+ 162          // RTC_GetCurrentTime()
+ 163          //-----------------------------------------------------------------------------
+ 164          //
+ 165          // Return Value : uint32_t value - the value of the SmaRTClock
+ 166          // Parameters   : none
+ 167          //
+ 168          // This function reads the current value of the SmaRTClock
+ 169          //
+ 170          // Instruction timing of multi-byte read with short bit set
+ 171          //
+ 172          //       mov      RTC0ADR, #0d0h
+ 173          //       nop
+ 174          //       nop
+ 175          //       nop
+ 176          //       mov      A, RTC0DAT
+ 177          //       nop
+ 178          //       nop
+C51 COMPILER V9.53.0.0   SMARTCLOCK                                                        11/13/2019 15:40:30 PAGE 4   
+
+ 179          //       mov      A, RTC0DAT
+ 180          //       nop
+ 181          //       nop
+ 182          //       mov      A, RTC0DAT
+ 183          //       nop
+ 184          //       nop
+ 185          //       mov      A, RTC0DAT
+ 186          //
+ 187          //-----------------------------------------------------------------------------
+ 188          uint32_t RTC_GetCurrentTime(void)
+ 189          {
+ 190   1         SI_UU32_t current_time;   
+ 191   1      
+ 192   1         RTC_Write( RTC0CN0, RTC0CN0_Local | RTC0CAP);   // Write '1' to RTC0CAP   
+ 193   1         while((RTC_Read(RTC0CN0) & RTC0CAP));          // Wait for RTC0CAP -> 0
+ 194   1         
+ 195   1         RTC0ADR = (0xD0 | CAPTURE0);
+ 196   1         NOP(); NOP(); NOP();
+ 197   1         current_time.u8[B0] = RTC0DAT;               // Least significant byte
+ 198   1         NOP(); NOP();
+ 199   1         current_time.u8[B1] = RTC0DAT;
+ 200   1         NOP(); NOP();
+ 201   1         current_time.u8[B2] = RTC0DAT;
+ 202   1         NOP(); NOP();
+ 203   1         current_time.u8[B3] = RTC0DAT;               // Most significant byte
+ 204   1         
+ 205   1         return current_time.u32;
+ 206   1      
+ 207   1      }
+ 208          
+ 209          //-----------------------------------------------------------------------------
+ 210          // RTC_SetCurrentTime()
+ 211          //-----------------------------------------------------------------------------
+ 212          //
+ 213          // Return Value : none 
+ 214          // Parameters   : 
+ 215          //
+ 216          // This function sets the current value of the SmaRTClock
+ 217          //
+ 218          // Instruction timing of multi-byte write with short bit set
+ 219          //
+ 220          //       mov      RTC0ADR, #010h
+ 221          //       mov      RTC0DAT, #05h
+ 222          //       nop
+ 223          //       mov      RTC0DAT, #06h
+ 224          //       nop
+ 225          //       mov      RTC0DAT, #07h
+ 226          //       nop
+ 227          //       mov      RTC0DAT, #08h
+ 228          //       nop
+ 229          
+ 230          //-----------------------------------------------------------------------------
+ 231          void RTC_SetCurrentTime(uint32_t time)
+ 232          {
+ 233   1         SI_UU32_t current_time;
+ 234   1         
+ 235   1         current_time.u32 = time;
+ 236   1      
+ 237   1         // Write the time to the capture registers
+ 238   1         RTC0ADR = (0x10 | CAPTURE0);       
+ 239   1         RTC0DAT = current_time.u8[B0];    // write data
+ 240   1         NOP();
+ 241   1         RTC0DAT = current_time.u8[B1];    // write data
+C51 COMPILER V9.53.0.0   SMARTCLOCK                                                        11/13/2019 15:40:30 PAGE 5   
+
+ 242   1         NOP();
+ 243   1         RTC0DAT = current_time.u8[B2];    // write data
+ 244   1         NOP(); 
+ 245   1         RTC0DAT = current_time.u8[B3];    // write data
+ 246   1         NOP(); 
+ 247   1       
+ 248   1         RTC_Write( RTC0CN0, RTC0CN0_Local | RTC0SET);   // Write '1' to RTC0SET   
+ 249   1         while((RTC_Read(RTC0CN0) & RTC0SET));          // Wait for RTC0SET -> 0
+ 250   1      
+ 251   1      }
+ 252          
+ 253          //-----------------------------------------------------------------------------
+ 254          // RTC0CN0_SetBits()
+ 255          //-----------------------------------------------------------------------------
+ 256          //
+ 257          // Return Value : none 
+ 258          // Parameters   : 
+ 259          //
+ 260          // This function sets bits in the RTC0CN0 register
+ 261          //-----------------------------------------------------------------------------
+ 262          void RTC0CN0_SetBits(uint8_t bits)
+ 263          {
+ 264   1         RTC0CN0_Local |= (bits & ~0x03);
+ 265   1         RTC_Write( RTC0CN0, RTC0CN0_Local | bits);
+ 266   1      }
+ 267          
+ 268          //-----------------------------------------------------------------------------
+ 269          // RTC0CN0_ClearBits()
+ 270          //-----------------------------------------------------------------------------
+ 271          //
+ 272          // Return Value : none 
+ 273          // Parameters   : 
+ 274          //
+ 275          // This function clears bits in the RTC0CN0 register
+ 276          //-----------------------------------------------------------------------------
+ 277          void RTC0CN0_ClearBits(uint8_t bits)
+ 278          {
+ 279   1         RTC0CN0_Local &= bits;
+ 280   1         RTC_Write( RTC0CN0, RTC0CN0_Local);
+ 281   1      }    
+ 282          
+ 283          /*
+ 284          //-----------------------------------------------------------------------------
+ 285          // RTC_SleepTicks
+ 286          //-----------------------------------------------------------------------------
+ 287          //
+ 288          // Return Value : none
+ 289          // Parameters   : 1) uint32_t the number of ticks to Sleep
+ 290          //
+ 291          // This function sleeps for the specified number of RTC ticks.  This function
+ 292          // is commented out and has been replaced by a simplified version below which
+ 293          // does not check for a "wrap" condition.  The simplified version of this
+ 294          // function cannot be used asynchronously with another "sleep" process,
+ 295          // however, this version may be used asynchronously at the expense of 
+ 296          // increased code space and execution time.
+ 297          // 
+ 298          // Note: The minimum number of ticks is 3
+ 299          //
+ 300          // Note: This routine will exit if a pre-configured RTC Alarm occurs, or if
+ 301          // another wake-up source occurs.
+ 302          // 
+ 303          //-----------------------------------------------------------------------------
+ 304          
+C51 COMPILER V9.53.0.0   SMARTCLOCK                                                        11/13/2019 15:40:30 PAGE 6   
+
+ 305          void RTC_SleepTicks(uint32_t ticks)
+ 306          {
+ 307             uint8_t EA_save;
+ 308             uint8_t PMU0CF_save;
+ 309             uint8_t RTC0CN0_save;
+ 310          
+ 311             SI_UU32_t current_time;
+ 312             SI_UU32_t current_alarm;
+ 313             SI_UU32_t alarm_value;
+ 314             
+ 315             uint8_t pending_alarm;
+ 316             uint8_t alarm_wrap;  
+ 317             
+ 318             // Disable Interrupts
+ 319             EA_save = IE_EA;
+ 320             IE_EA = 0;
+ 321             
+ 322             // Check for pending alarms
+ 323             pending_alarm = RTC_Alarm;
+ 324          
+ 325             // Initiate Capture of the current time 
+ 326             RTC_Write( RTC0CN0, RTC0CN0_Local | RTC0CAP);   // Write '1' to RTC0CAP   
+ 327             
+ 328             // Read the current alarm value
+ 329             RTC0ADR = (0xD0 | ALARM0);
+ 330             NOP(); NOP(); NOP();
+ 331             current_alarm.u8[B0] = RTC0DAT;               // Least significant byte
+ 332             NOP(); NOP();
+ 333             current_alarm.u8[B1] = RTC0DAT;
+ 334             NOP(); NOP();
+ 335             current_alarm.u8[B2] = RTC0DAT;
+ 336             NOP(); NOP();
+ 337             current_alarm.u8[B3] = RTC0DAT;               // Most significant byte
+ 338             
+ 339             // Copy the current time into <current_time>
+ 340             while((RTC_Read(RTC0CN0) & RTC0CAP));         // Wait for RTC0CAP -> 0
+ 341             RTC0ADR = (0xD0 | CAPTURE0);
+ 342             NOP(); NOP(); NOP();
+ 343             current_time.u8[B0] = RTC0DAT;               // Least significant byte
+ 344             NOP(); NOP();
+ 345             current_time.u8[B1] = RTC0DAT;
+ 346             NOP(); NOP();
+ 347             current_time.u8[B2] = RTC0DAT;
+ 348             NOP(); NOP();
+ 349             current_time.u8[B3] = RTC0DAT;               // Most significant byte
+ 350          
+ 351             // Preserve RTC0CN0
+ 352             RTC0CN0_save = RTC0CN0_Local;
+ 353          
+ 354             // Check for wrap if alarm is enabled
+ 355             if((RTC0CN0_Local & RTC0AEN) && (current_time.u32 + ticks > current_alarm.u32))
+ 356             {  
+ 357                alarm_value.u32 = current_alarm.u32;
+ 358                alarm_wrap = 1;
+ 359          
+ 360             } else
+ 361             {
+ 362                alarm_value.u32 = current_time.u32 + ticks;
+ 363                RTC0CN0_Local &= ~ALRM;
+ 364                alarm_wrap = 0;
+ 365             }
+ 366                    
+ 367             // Write the alarm value
+C51 COMPILER V9.53.0.0   SMARTCLOCK                                                        11/13/2019 15:40:30 PAGE 7   
+
+ 368             RTC_WriteAlarm(alarm_value.u32);   
+ 369          
+ 370             // Force the RTC wake-up sources to be enabled
+ 371             PMU0CF_save = PMU0CF_Local;
+ 372             PMU0CF_Local |= RTC;
+ 373             
+ 374             // Place device in Sleep Mode
+ 375             LPM(SLEEP);
+ 376          
+ 377             // Restore Enabled Wake-up Sources and RTC state
+ 378             PMU0CF_Local = PMU0CF_save;
+ 379             RTC0CN0_Local = RTC0CN0_save;   
+ 380          
+ 381             // Clear Alarm Flag unless a wrap was detected or it was already
+ 382             // set upon entry into the function
+ 383             if(alarm_wrap == 0 && pending_alarm == 0)
+ 384             {
+ 385                RTC_Alarm = 0;
+ 386             }
+ 387          
+ 388             // Restore alarm value unless a wrap was detected
+ 389             if(alarm_wrap == 0)
+ 390             {
+ 391                RTC_WriteAlarm(current_alarm.u32);
+ 392             }  
+ 393             
+ 394             // Restore Interrupts
+ 395             IE_EA = EA_save;
+ 396          
+ 397          }   
+ 398          
+ 399          */
+ 400          
+ 401          //-----------------------------------------------------------------------------
+ 402          // RTC_SleepTicks
+ 403          //-----------------------------------------------------------------------------
+ 404          //
+ 405          // Return Value : none
+ 406          // Parameters   : 1) uint32_t the number of ticks to Sleep
+ 407          //
+ 408          // This function sleeps for the specified number of RTC ticks.  Software should
+ 409          // ensure that the device will wake up and restore the original RTC alarm 
+ 410          // value before the next alarm occurs. 
+ 411          // 
+ 412          // Note: The minimum number of ticks is 3
+ 413          //
+ 414          // 
+ 415          //-----------------------------------------------------------------------------
+ 416          
+ 417          /*void RTC_SleepTicks(uint32_t ticks)
+ 418          {
+ 419             uint8_t EA_save;
+ 420             uint8_t PMU0CF_save;
+ 421             uint8_t RTC0CN0_save;
+ 422          
+ 423             SI_UU32_t current_time;
+ 424             
+ 425             // Disable Interrupts
+ 426             EA_save = IE_EA;
+ 427             IE_EA = 0;
+ 428          
+ 429             // Preserve RTC0CN0
+ 430             RTC0CN0_save = RTC0CN0_Local;
+C51 COMPILER V9.53.0.0   SMARTCLOCK                                                        11/13/2019 15:40:30 PAGE 8   
+
+ 431             
+ 432             // Disable Auto Reset
+ 433             RTC0CN0_ClearBits(~ALRM);
+ 434          
+ 435             // Obtain the current time
+ 436             current_time.u32 = RTC_GetCurrentTime();
+ 437                        
+ 438             // Write the alarm value
+ 439             RTC_WriteAlarm(current_time.u32 + ticks);   
+ 440          
+ 441             // Force the RTC wake-up sources to be enabled
+ 442             PMU0CF_save = PMU0CF_Local;
+ 443             PMU0CF_Local |= RTC;
+ 444             
+ 445             // Place device in Sleep Mode
+ 446             LPM(SLEEP);
+ 447          
+ 448             // Restore Enabled Wake-up Sources and RTC state
+ 449             PMU0CF_Local = PMU0CF_save;
+ 450             RTC0CN0_Local = RTC0CN0_save;   
+ 451          
+ 452             // Clear Alarm Flag
+ 453             RTC_Alarm = 0;
+ 454          
+ 455             // Restore alarm value unless a wrap was detected
+ 456             RTC_WriteAlarm(WAKE_INTERVAL_TICKS);
+ 457             
+ 458             // Restore Interrupts
+ 459             IE_EA = EA_save;
+ 460          
+ 461          }*/
+ 462          
+ 463          #endif       
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    186    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =      1      12
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+   EDATA SIZE       =   ----    ----
+   HDATA SIZE       =   ----    ----
+   XDATA CONST SIZE =   ----    ----
+   FAR CONST SIZE   =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

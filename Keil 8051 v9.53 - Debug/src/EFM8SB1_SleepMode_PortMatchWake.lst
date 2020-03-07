@@ -1,0 +1,474 @@
+C51 COMPILER V9.53.0.0   EFM8SB1_SLEEPMODE_PORTMATCHWAKE                                   03/07/2020 14:55:03 PAGE 1   
+
+
+C51 COMPILER V9.53.0.0, COMPILATION OF MODULE EFM8SB1_SLEEPMODE_PORTMATCHWAKE
+OBJECT MODULE PLACED IN .\src\EFM8SB1_SleepMode_PortMatchWake.OBJ
+COMPILER INVOKED BY: d:\simplicitystdio\developer\toolchains\keil_8051\9.53\BIN\C51.exe E:\redtempturebee\src\EFM8SB1_Sl
+                    -eepMode_PortMatchWake.c OMF2 SMALL DEBUG OBJECTEXTEND ROM(LARGE) WARNINGLEVEL(2) FLOATFUZZY(3) OPTIMIZE(8,SPEED) INTVECT
+                    -OR(0X0000) INTPROMOTE INCDIR(E:\redtempturebee\inc;D:/simplicitystdio/developer/sdks/si8051/v3//Device/shared/si8051Base
+                    -;D:/simplicitystdio/developer/sdks/si8051/v3//Device/EFM8SB1;D:/simplicitystdio/developer/sdks/si8051/v3//Device/EFM8SB1
+                    -/inc) PRINT(.\src\EFM8SB1_SleepMode_PortMatchWake.lst) COND PAGEWIDTH(120) PAGELENGTH(65) OBJECT(.\src\EFM8SB1_SleepMode
+                    -_PortMatchWake.OBJ)
+
+line level    source
+
+   1          //-----------------------------------------------------------------------------
+   2          // SB1_SleepMode_PortMatchWake.c
+   3          //-----------------------------------------------------------------------------
+   4          // Copyright 2014 Silicon Laboratories, Inc.
+   5          // http://developer.silabs.com/legal/version/v11/Silicon_Labs_Software_License_Agreement.txt
+   6          //
+   7          // Program Description:
+   8          //
+   9          // This program flashes LED0 on the EFM8SB1 target board using the
+  10          // interrupt handler for Timer2 when the MCU is awake.
+  11          //
+  12          // Pressing the switch on PB1  will place the device in a low power mode.
+  13          // Pressing the switch on PB0  will wake up the device using Port Match.
+  14          //
+  15          // How To Test:
+  16          // 1) Place the switch in "AEM" mode.
+  17          // 2) Connect the EFM8SB1 STK board to a PC using a mini USB cable.
+  18          // 3) Compile and download code to the EFM8SB1 STK board.
+  19          //    In Simplicity Studio IDE, select Run -> Debug from the menu bar,
+  20          //    click the Debug button in the quick menu, or press F11.
+  21          // 4) Run the code.
+  22          //    In Simplicity Studio IDE, select Run -> Resume from the menu bar,
+  23          //    click the Resume button in the quick menu, or press F8.
+  24          // 5) Press PB0 to place the device in sleep mode.  LED0 will stay lit
+  25          //    while the device is sleeping.
+  26          //    Press PB1 to wake it back up. The LED0 will blink when
+  27          //    the device is awake.
+  28          //
+  29          //
+  30          // Target:         EFM8SB1
+  31          // Tool chain:     Silicon Labs Studio / Keil C51 9.51
+  32          // Command Line:   None
+  33          //
+  34          // Release 1.0 (BL)
+  35          //    - Initial Release
+  36          //    - 9 JAN 2015
+  37          //
+  38          //
+  39          
+  40          //-----------------------------------------------------------------------------
+  41          // Includes
+  42          //-----------------------------------------------------------------------------
+  43          #include <stdlib.h>
+  44          #include <string.h>
+  45          #include <si_toolchain.h>
+  46          #include <SI_EFM8SB1_Register_Enums.h>                  // SI_SFR declarations
+  47          #include "InitDevice.h"
+  48          #include "smartclock.h"                // RTC Functionality
+  49          #include "power.h"                     // Power Management Functionality
+  50          
+  51          //-----------------------------------------------------------------------------
+C51 COMPILER V9.53.0.0   EFM8SB1_SLEEPMODE_PORTMATCHWAKE                                   03/07/2020 14:55:03 PAGE 2   
+
+  52          // Global VARIABLES
+  53          //-----------------------------------------------------------------------------
+  54          SI_LOCATED_VARIABLE_NO_INIT (reserved, uint8_t, SI_SEG_XDATA, 0x0000);
+  55          
+  56          #define SDA_H           SDA=1
+  57          #define SDA_L           SDA=0
+  58          #define SCL_H           SCL=1
+  59          #define SCL_L                   SCL=0
+  60          #define SMBUS_SDA_PIN   SDA
+  61          #define ACK                     0
+  62          #define NACK                    1
+  63          #define SA                              0x00                                   //Slave address 单个 MLX90615 时地址为 0x00,多个时地
+             -址默0x5b
+  64          #define RAM_ACCESS              0x20                           //RAM access command
+  65          #define EEPROM_ACCESS   0x10                        //EEPROM access command
+  66          #define RAM_TOBJ1               0x07                            //To1 address in the eeprom 物体温度
+  67          SI_SBIT(SDA, SFR_P1, 7);
+  68          SI_SBIT(SCL, SFR_P1, 6);
+  69          
+  70          SI_SBIT(UART_TX, SFR_P0, 4);
+  71          SI_SBIT(UART_RX, SFR_P0, 5);
+  72          
+  73          #define uart_tx()   UART_TX = 0
+  74          #define uart_rx()   UART_RX = 0
+  75          
+  76          
+  77          void usleep(int us)
+  78          {
+  79   1              volatile int i =800*us;
+  80   1              while(i-- > 0);
+  81   1      }
+  82          void msleep(int ms)
+  83          {
+  84   1             volatile int i = ms;
+  85   1             while(i-- > 0)usleep(1);
+  86   1      }
+  87          void SMBus_Delay(uint16_t time)
+  88          {
+  89   1              /*uint16_t i, j;
+  90   1              for (i=0; i<4; i++)
+  91   1              {
+  92   1                      for (j=0; j<time; j++);
+  93   1              }*/
+  94   1              if(time==0){
+  95   2              }
+  96   1              else if((time==1)||(time==10)||(time==25)||(time==40)||(time==50)||(time==60)||(time==100)){
+  97   2                      timer_sleepus_select(time,1);
+  98   2              }
+  99   1              else if(time<10){
+ 100   2                              timer_sleepus_select(1,time);
+ 101   2              }
+ 102   1              else if(time<1000){
+ 103   2                      timer_sleepus_select(10,time/10);
+ 104   2                      timer_sleepus_select(1,time-time/10*10);
+ 105   2              }
+ 106   1              else{
+ 107   2                      timer_sleepus_select(10,time/10);
+ 108   2              }
+ 109   1      }
+ 110          void Mlx96015_Configuration(void)
+ 111          {
+ 112   1          SDA_H;  //拉高SDAL和SCL
+ 113   1          SCL_H; //因为 SMBus 是下降沿触发
+C51 COMPILER V9.53.0.0   EFM8SB1_SLEEPMODE_PORTMATCHWAKE                                   03/07/2020 14:55:03 PAGE 3   
+
+ 114   1      }
+ 115          
+ 116          void SMBus_StartBit(void)
+ 117          {
+ 118   1              SDA_H; // Set SDA line
+ 119   1          SMBus_Delay(1);   // Wait a few microseconds
+ 120   1          SCL_H; // Set SCK line
+ 121   1          SMBus_Delay(5);   // Generate bus free time between Stop
+ 122   1          SDA_L; // Clear SDA line
+ 123   1          SMBus_Delay(10);  // Hold time after (Repeated) Start
+ 124   1                            // Condition. After this period, the first clock is generated.
+ 125   1                            //(Thd:sta=4.0us min)
+ 126   1          SCL_L;            // Clear SCK line
+ 127   1          SMBus_Delay(2);   // Wait a few microseconds
+ 128   1      }
+ 129          void SMBus_StopBit(void)
+ 130          {
+ 131   1              SCL_L; // Clear SCK line
+ 132   1          SMBus_Delay(5); // Wait a few microseconds
+ 133   1          SDA_L; // Clear SDA line
+ 134   1          SMBus_Delay(5); // Wait a few microseconds
+ 135   1          SCL_H; // Set SCK line
+ 136   1          SMBus_Delay(10); // Stop condition setup time(Tsu:sto=4.0us min)
+ 137   1          SDA_H; // Set SDA line
+ 138   1      }
+ 139          void SMBus_SendBit(uint8_t bit_out)
+ 140          {
+ 141   1              if(bit_out==0)
+ 142   1                      {
+ 143   2                              SDA_L;
+ 144   2                      }
+ 145   1                      else
+ 146   1                              {
+ 147   2                                      SDA_H;
+ 148   2                              }
+ 149   1                              SMBus_Delay(2); // Tsu:dat = 250ns minimum
+ 150   1                              SCL_H; // Set SCK line
+ 151   1                              SMBus_Delay(10); // High Level of Clock Pulse
+ 152   1                              SCL_L; // Clear SCK line
+ 153   1                              SMBus_Delay(10); // Low Level of Clock Pulse
+ 154   1                //SMBUS_SDA_H(); // Master release SDA line ,
+ 155   1                              return;
+ 156   1      }
+ 157          uint8_t SMBus_ReceiveBit(void)
+ 158          {
+ 159   1              uint8_t Ack_bit;
+ 160   1              SDA_H; //引脚靠外部电阻上拉， 当作输入
+ 161   1              SCL_H; // Set SCL line
+ 162   1              SMBus_Delay(2); // High Level of Clock Pulse
+ 163   1              if (SMBUS_SDA_PIN)
+ 164   1                      {
+ 165   2                              Ack_bit=1;
+ 166   2                      }
+ 167   1                      else
+ 168   1                              {
+ 169   2                                      Ack_bit=0;
+ 170   2                              }
+ 171   1                              SCL_L; // Clear SCL line
+ 172   1                              SMBus_Delay(4); // Low Level of Clock Pulse
+ 173   1                              return Ack_bit;
+ 174   1      }
+ 175          uint8_t SMBus_SendByte(uint8_t Tx_buffer)
+ 176          {
+C51 COMPILER V9.53.0.0   EFM8SB1_SLEEPMODE_PORTMATCHWAKE                                   03/07/2020 14:55:03 PAGE 4   
+
+ 177   1              uint8_t Bit_counter;
+ 178   1          uint8_t Ack_bit;
+ 179   1          uint8_t bit_out;
+ 180   1              for(Bit_counter=8; Bit_counter; Bit_counter--)
+ 181   1              {
+ 182   2                      if (Tx_buffer&0x80)
+ 183   2                              {
+ 184   3                                      bit_out=1; // If the current bit of Tx_buffer is 1 set bit_out
+ 185   3                              }
+ 186   2                              else
+ 187   2                                      {
+ 188   3                                              bit_out=0; // else clear bit_out
+ 189   3                                      }
+ 190   2                                      SMBus_SendBit(bit_out); // Send the current bit on SDA
+ 191   2                                      Tx_buffer<<=1; // Get next bit for checking
+ 192   2                                      }
+ 193   1              Ack_bit=SMBus_ReceiveBit(); // Get acknowledgment bit
+ 194   1                                      return Ack_bit;
+ 195   1      }
+ 196          
+ 197          uint8_t SMBus_ReceiveByte(uint8_t ack_nack)
+ 198          {
+ 199   1              uint8_t RX_buffer;
+ 200   1              uint8_t Bit_Counter;
+ 201   1              for(Bit_Counter=8; Bit_Counter; Bit_Counter--)
+ 202   1              {
+ 203   2                      if(SMBus_ReceiveBit()) // Get a bit from the SDA line
+ 204   2                              {
+ 205   3                                      RX_buffer <<= 1; // If the bit is HIGH save 1 in RX_buffer
+ 206   3                                      RX_buffer |=0x01;
+ 207   3                              }
+ 208   2                              else
+ 209   2                                      {
+ 210   3                                              RX_buffer <<= 1; // If the bit is LOW save 0 in RX_buffer
+ 211   3                                              RX_buffer &=0xfe;
+ 212   3                          }
+ 213   2              }
+ 214   1              SMBus_SendBit(ack_nack); // Sends acknowledgment bit
+ 215   1              return RX_buffer;
+ 216   1      }
+ 217          uint8_t PEC_Calculation(uint8_t pec[])
+ 218          {
+ 219   1              uint8_t crc[6];
+ 220   1              uint8_t BitPosition=47;
+ 221   1              uint8_t shift;
+ 222   1              uint8_t i;
+ 223   1              uint8_t j;
+ 224   1              uint8_t temp;
+ 225   1              do
+ 226   1              { /*Load pattern value 0x000000000107*/
+ 227   2                      crc[5]=0;
+ 228   2                      crc[4]=0;
+ 229   2                      crc[3]=0;
+ 230   2                      crc[2]=0;
+ 231   2                      crc[1]=0x01;
+ 232   2                      crc[0]=0x07; /*Set maximum bit position at 47 ( six bytes byte5...byte0,MSbit=47)*/
+ 233   2                      BitPosition=47; /*Set shift position at 0*/
+ 234   2                      shift=0; /*Find first "1" in the transmited message beginning from the MSByte byte5*/
+ 235   2                      i=5;
+ 236   2                      j=0;
+ 237   2                      while((pec[i]&(0x80>>j))==0 && i>0)
+ 238   2                              {
+ 239   3                                      BitPosition--;
+C51 COMPILER V9.53.0.0   EFM8SB1_SLEEPMODE_PORTMATCHWAKE                                   03/07/2020 14:55:03 PAGE 5   
+
+ 240   3                                      if(j<7)
+ 241   3                                              {
+ 242   4                                                      j++;
+ 243   4                                              }
+ 244   3                                              else
+ 245   3                                                      {
+ 246   4                                                              j=0x00;
+ 247   4                                                              i--;
+ 248   4                                                      }
+ 249   3                              }/*End of while */
+ 250   2                              /*Get shift value for pattern value*/
+ 251   2                              shift=BitPosition-8;
+ 252   2                              /*Shift pattern value */
+ 253   2                              while(shift)
+ 254   2                                      {
+ 255   3                                              for(i=5; i<0xFF; i--)
+ 256   3                                              {
+ 257   4                                                      if((crc[i-1]&0x80) && (i>0))
+ 258   4                                                              {
+ 259   5                                                                      temp=1;
+ 260   5                                                              }
+ 261   4                                                              else
+ 262   4                                                                      {
+ 263   5                                                                              temp=0;
+ 264   5                                                                      }
+ 265   4                                                                      crc[i]<<=1;
+ 266   4                                                                      crc[i]+=temp;
+ 267   4                                              }/*End of for*/
+ 268   3                                              shift--;
+ 269   3                                      }/*End of while*/ /*Exclusive OR between pec and crc*/
+ 270   2                                      for(i=0; i<=5; i++)
+ 271   2                                      {
+ 272   3                                              pec[i] ^=crc[i];
+ 273   3                                      }/*End of for*/
+ 274   2              }
+ 275   1              while(BitPosition>8); /*End of do-while*/
+ 276   1              return pec[0];
+ 277   1      }
+ 278          /*int int_to_string(unsigned char *buffer, int  h )
+ 279          {
+ 280                  int len=0;
+ 281                  if(h>=10000){
+ 282                          len=5;
+ 283                          buffer[0]=h/10000 + '0';
+ 284                          buffer[1]=(h%10000)/1000 + '0';
+ 285                          buffer[2]=(h%1000)/100 + '0';
+ 286                          buffer[3]=(h%100)/10 + '0';
+ 287                          buffer[4]=(h%10) + '0';
+ 288          
+ 289                  }
+ 290                  else if(h>=1000){
+ 291                          len=4;
+ 292                          buffer[0]=h/1000 + '0';
+ 293                          buffer[1]=(h%1000)/100 + '0';
+ 294                          buffer[2]=(h%100)/10 + '0';
+ 295                          buffer[3]=(h%10) + '0';
+ 296          
+ 297                  }
+ 298                  else if(h>=100){
+ 299                          len=3;
+ 300                          buffer[0]=h/100 + '0';
+ 301                          buffer[1]=(h%100)/10 + '0';
+ 302                          buffer[2]=(h%10) + '0';
+C51 COMPILER V9.53.0.0   EFM8SB1_SLEEPMODE_PORTMATCHWAKE                                   03/07/2020 14:55:03 PAGE 6   
+
+ 303          
+ 304                  }
+ 305                  else if(h>=10){
+ 306                          len=2;
+ 307                          buffer[0]=h/10 + '0';
+ 308                          buffer[1]=h%10 + '0';
+ 309          
+ 310                  }
+ 311                  else{
+ 312                          len=1;
+ 313                          buffer[0]=h + '0';
+ 314                  }
+ 315          
+ 316                   return len;
+ 317          }*/
+ 318          /*int 型，限制长度8位*/
+ 319          int int_to_string(unsigned char *buffer, unsigned int  h )
+ 320          {
+ 321   1              int len=0;
+ 322   1              int i;
+ 323   1              unsigned int  t=h;
+ 324   1              while(t>0){
+ 325   2                      t=t/10;
+ 326   2                      len++;
+ 327   2              }
+ 328   1              t=h;
+ 329   1              for( i=0;i<len;i++){
+ 330   2                      buffer[len-1-i]=t%10+'0';
+ 331   2                      t=t/10;
+ 332   2              }
+ 333   1              return len;
+ 334   1      }
+ 335          uint16_t SMBus_ReadMemory(uint8_t slaveAddress, uint8_t command)
+ 336          {
+ 337   1              char buf1[8]={0};
+ 338   1              int len=0;
+ 339   1              uint16_t tempdata;// Data storage (DataH:DataL)
+ 340   1              uint8_t Pec; // PEC byte storage
+ 341   1              uint8_t DataL=0; // Low data byte storage
+ 342   1              uint8_t DataH=0; // High data byte storage
+ 343   1              uint8_t arr[6]; // Buffer for the sent bytes
+ 344   1              uint8_t PecReg; // Calculated PEC byte storage
+ 345   1              uint8_t ErrorCounter; // Defines the number of the attempts for communicationwith MLX90615
+ 346   1              ErrorCounter=0x00; // Initialising of ErrorCounter
+ 347   1              slaveAddress <<= 1; //2-7 位表示从机地址
+ 348   1              do
+ 349   1              {
+ 350   2                      repeat: SMBus_StopBit(); //If slave send NACK stop comunication
+ 351   2                      --ErrorCounter; //Pre-decrement ErrorCounter
+ 352   2                      if(!ErrorCounter) //ErrorCounter=0?
+ 353   2                      {
+ 354   3                              break; //Yes,go out from do-while{}
+ 355   3                      }
+ 356   2                      SMBus_StartBit(); //Start condition
+ 357   2                      if(SMBus_SendByte(slaveAddress))//Send SlaveAddress 最低位 Wr=0 表示接下来写命令
+ 358   2                      {
+ 359   3                              goto repeat; //Repeat comunication again
+ 360   3                      }
+ 361   2                      if(SMBus_SendByte(command)) //Send command
+ 362   2                      {
+ 363   3                              goto repeat; //Repeat comunication again
+ 364   3                      }
+ 365   2                      SMBus_StartBit(); //Repeated Start condition
+C51 COMPILER V9.53.0.0   EFM8SB1_SLEEPMODE_PORTMATCHWAKE                                   03/07/2020 14:55:03 PAGE 7   
+
+ 366   2                      if(SMBus_SendByte(slaveAddress+1)) //Send SlaveAddress 最低位 Rd=1 表示接下来读数据
+ 367   2                              {
+ 368   3                                      goto repeat; //Repeat comunication again
+ 369   3                              }
+ 370   2                              DataL = SMBus_ReceiveByte(ACK); //Read low data,master must send ACK
+ 371   2                              DataH = SMBus_ReceiveByte(ACK); //Read high data,master must send ACK
+ 372   2                              Pec = SMBus_ReceiveByte(NACK); //Read PEC byte, master must send NACK
+ 373   2                              SMBus_StopBit(); //Stop condition
+ 374   2                              arr[5] = slaveAddress;
+ 375   2                              arr[4] = command;
+ 376   2                              arr[3] = slaveAddress+1; //Load array arr
+ 377   2                              arr[2] = DataL;
+ 378   2                              arr[1] = DataH;
+ 379   2                              arr[0] = 0;
+ 380   2                              PecReg=PEC_Calculation(arr); //Calculate CRC
+ 381   2                      }
+ 382   1                      while(PecReg != Pec); //If received and calculated CRC are equal go out fromdo-while{}
+ 383   1                              //DataH=54;
+ 384   1                              //DataL=96;//tempdata=13920;//5.25du
+ 385   1                              len=int_to_string(buf1, DataH);
+ 386   1                              uart_send("DataH:", sizeof("DataH:")-1);
+ 387   1                              uart_send(buf1, len);//uart_send(buf1, sizeof(buf1));
+ 388   1                              uart_send("\r\n", sizeof( "\r\n")-1);
+ 389   1                              len=int_to_string(buf1, DataL);
+ 390   1                              uart_send("DataL:", sizeof("DataL:")-1);
+ 391   1                              uart_send(buf1, len);//uart_send(buf1, sizeof(buf1));
+ 392   1                              uart_send("\r\n", sizeof( "\r\n")-1);
+ 393   1      
+ 394   1                              tempdata = (DataH<<8) | DataL; //data=DataH:DataL
+ 395   1                              len=int_to_string(buf1, tempdata);
+ 396   1                              uart_send("tempdata:", sizeof("tempdata:")-1);
+ 397   1                              uart_send(buf1, len);//uart_send(buf1, sizeof(buf1));
+ 398   1                              uart_send("\r\n", sizeof( "\r\n")-1);
+ 399   1                      return tempdata;
+ 400   1      }
+ 401          
+ 402          int SMBus_ReadTemp(void)
+ 403          {
+ 404   1                      float real_temp;
+ 405   1                      uint16_t tempdata;
+ 406   1                      tempdata=SMBus_ReadMemory(SA, RAM_ACCESS|RAM_TOBJ1);
+ 407   1                      real_temp=tempdata*0.02-273.15;
+ 408   1                      return real_temp*100;
+ 409   1      }
+ 410          
+ 411          int main (void)
+ 412          {
+ 413   1              char buf1[8]={0};
+ 414   1              int len=0;
+ 415   1              int temp_100bei;
+ 416   1      
+ 417   1              enter_DefaultMode_from_RESET();
+ 418   1              while(1)
+ 419   1              {
+ 420   2                      temp_100bei=SMBus_ReadTemp();
+ 421   2                      len=int_to_string(buf1, temp_100bei);
+ 422   2                      uart_send("objtemp:", sizeof("objtemp:")-1);
+ 423   2                      uart_send(buf1, len);//uart_send(buf1, sizeof(buf1));
+ 424   2                      uart_send("\r\n", sizeof( "\r\n")-1);
+ 425   2                      msleep(500);
+ 426   2              }
+ 427   1      }
+
+C51 COMPILER V9.53.0.0   EFM8SB1_SLEEPMODE_PORTMATCHWAKE                                   03/07/2020 14:55:03 PAGE 8   
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =   1318    ----
+   CONSTANT SIZE    =     52    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----      76
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+   EDATA SIZE       =   ----    ----
+   HDATA SIZE       =   ----    ----
+   XDATA CONST SIZE =   ----    ----
+   FAR CONST SIZE   =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
